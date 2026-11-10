@@ -56,6 +56,14 @@
       </article>
     </section>
 
+    <section class="card commute-card" aria-label="My commute">
+      <div class="card-head">
+        <h2>My commute</h2>
+        <span class="card-note" id="commute-note"></span>
+      </div>
+      <div class="commute-body" id="commute-body"></div>
+    </section>
+
     <section class="card map-card" aria-label="Map">
       <div class="card-head">
         <h2>Live map</h2>
@@ -119,6 +127,16 @@
         <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty for demo data">
       </label>
       <p class="hint">Get a free key at developer.tomtom.com. It is saved only in this browser.</p>
+      <fieldset class="commute-fields">
+        <legend>My commute</legend>
+        <label>Home
+          <input id="home-input" type="text" autocomplete="off" placeholder="e.g. Jillelguda, Hyderabad">
+        </label>
+        <label>Work
+          <input id="work-input" type="text" autocomplete="off" placeholder="e.g. Commerzone Raidurg">
+        </label>
+        <p class="hint">A place name, or exact coordinates like <code>17.4325, 78.3772</code> (in Google Maps, long-press a spot to copy them). Saved only in this browser.</p>
+      </fieldset>
       <label>Refresh every
         <select id="interval-select">
           <option value="60">1 minute</option>

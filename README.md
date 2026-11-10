@@ -8,6 +8,7 @@ Live status of Hyderabad traffic: an auto-refreshing dashboard. It monitors 18 k
 
 - **City congestion index**: extra travel time across the monitored corridors compared with free-flow conditions (similar to the TomTom Traffic Index).
 - **Live map** (Leaflet): TomTom map with its live flow layer for all roads, the monitored corridors coloured by congestion, and incident markers. Road closures are on a separate layer, hidden by default (turn it on from the layers button).
+- **My commute**: live travel time between your home and work in both directions, with the usual time for this hour, the empty-road time, up to three route options (named by the main roads they use) drawn on the map, and a link to compare in Google Maps.
 - **Corridor table**: current speed vs free-flow speed, delay and status (Free flow / Moderate / Heavy / Severe / Closed), sortable. Click a row to fly to it on the map.
 - **Incidents feed**: accidents, jams, road works, closures and flooding, sorted by severity.
 - **Congestion trend** for 3h, 6h or 24h, stored in your browser and built up as the page refreshes.
@@ -27,7 +28,7 @@ The key is stored only in your browser's `localStorage`. To deploy with a built-
 
 ### Quota
 
-Each refresh makes one Flow request per corridor (18) plus one Incidents request. The free tier allows about 2,500 non-tile requests a day:
+Each refresh makes one Flow request per corridor (18) plus one Incidents request, plus 2 routing requests if a commute is set up. The free tier allows about 2,500 non-tile requests a day:
 
 | Refresh interval | Requests per hour | Viewing time per day on free tier |
 |---|---|---|
@@ -36,6 +37,12 @@ Each refresh makes one Flow request per corridor (18) plus one Incidents request
 | 15 min | 76 | ~33 h |
 
 Map and traffic tiles count against a separate, larger tile quota.
+
+## Set up your commute
+
+Open **Settings → My commute** and enter **Home** and **Work**, either as place names (for example `Commerzone Raidurg`) or as exact coordinates (`17.4325, 78.3772`). Place names are looked up with TomTom Search, so they need an API key. Hover the **H** and **W** pins on the map to check that the right places were found; if a place is off, paste coordinates instead (in Google Maps, long-press a spot to copy them).
+
+Your places are saved only in your browser and are never written to this repository. The commute adds 2 routing requests to each refresh.
 
 ## Run locally
 

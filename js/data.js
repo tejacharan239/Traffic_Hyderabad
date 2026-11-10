@@ -200,5 +200,82 @@
     };
   }
 
-  window.TrafficData = { fetchLive, fetchDemo, ApiError };
+  /* ---------------- Commute: place search + routing ---------------- */
+
+  const COORDS_RE = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
+
+  // Turn a place name (or "lat, lon") into a point. Names need a TomTom key.
+  async function geocode(key, query, near) {
+    const m = query.match(COORDS_RE);
+    if (m) {
+      const lat = Number(m[1]), lon = Number(m[2]);
+      return { lat, lon, address: `${lat.toFixed(5)}, ${lon.toFixed(5)}` };
+    }
+    if (!key) throw new Error("Searching place names needs a TomTom key; paste coordinates (lat, lon) instead");
+    const url = `https://api.tomtom.com/search/2/search/${encodeURIComponent(query)}.json` +
+      `?key=${encodeURIComponent(key)}&countrySet=IN&lat=${near[0]}&lon=${near[1]}&radius=60000&limit=1&language=en-GB`;
+    const r = ((await getJson(url)).results || [])[0];
+    if (!r) throw new Error(`Couldn't find "${query}" - try a nearby landmark or paste coordinates`);
+    return {
+      lat: r.position.lat, lon: r.position.lon,
+      address: [r.poi && r.poi.name, r.address && r.address.freeformAddress].filter(Boolean).join(", ")
+    };
+  }
+
+  // Name a route by the roads it spends the most distance on.
+  function viaRoads(guidance, total) {
+    const ins = (guidance && guidance.instructions) || [];
+    const byRoad = new Map();
+    for (let i = 0; i < ins.length - 1; i++) {
+      const name = ins[i].street || (ins[i].roadNumbers && ins[i].roadNumbers[0]);
+      if (!name) continue;
+      const len = ins[i + 1].routeOffsetInMeters - ins[i].routeOffsetInMeters;
+      byRoad.set(name, (byRoad.get(name) || 0) + len);
+    }
+    return [...byRoad.entries()]
+      .filter(([, len]) => len >= Math.max(1500, total * 0.08))
+      .sort((a, b) => b[1] - a[1]).slice(0, 2).map(([name]) => name);
+  }
+
+  // Traffic-aware car routes, fastest first, with up to 2 alternatives.
+  async function liveRoutes(key, from, to, signal) {
+    const url = `https://api.tomtom.com/routing/1/calculateRoute/${from.lat},${from.lon}:${to.lat},${to.lon}/json` +
+      `?key=${encodeURIComponent(key)}&traffic=true&travelMode=car&routeType=fastest&maxAlternatives=2` +
+      `&computeTravelTimeFor=all&instructionsType=text&language=en-GB`;
+    const json = await getJson(url, signal);
+    return (json.routes || []).map(r => {
+      const sm = r.summary;
+      return {
+        travelTime: sm.travelTimeInSeconds,
+        noTraffic: sm.noTrafficTravelTimeInSeconds ?? null,
+        typical: sm.historicTrafficTravelTimeInSeconds ?? null,
+        delay: sm.trafficDelayInSeconds || 0,
+        length: sm.lengthInMeters,
+        via: viaRoads(r.guidance, sm.lengthInMeters),
+        points: (r.legs || []).flatMap(l => (l.points || []).map(p => [p.latitude, p.longitude]))
+      };
+    }).sort((a, b) => a.travelTime - b.travelTime);
+  }
+
+  function haversineKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  // Demo: one simulated route (no geometry - it would be a fake straight line).
+  function demoRoutes(from, to, t = Date.now()) {
+    const km = haversineKm(from, to) * 1.35;
+    const noTraffic = (km / 40) * 3600;
+    const typical = noTraffic * (1 + rushCurve(t) * 0.85);
+    const now = typical * (1 + drift(hashStr(`${from.lat}${to.lon}`), t) * 0.08);
+    return [{
+      travelTime: Math.round(now), noTraffic: Math.round(noTraffic), typical: Math.round(typical),
+      delay: Math.round(Math.max(0, now - noTraffic)), length: Math.round(km * 1000),
+      via: [], points: []
+    }];
+  }
+
+  window.TrafficData = { fetchLive, fetchDemo, geocode, liveRoutes, demoRoutes, ApiError };
 })();

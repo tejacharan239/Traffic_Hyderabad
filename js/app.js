@@ -3,7 +3,7 @@
   "use strict";
 
   const cfg = window.TRAFFIC_CONFIG;
-  const { fetchLive, fetchDemo } = window.TrafficData;
+  const { fetchLive, fetchDemo, geocode, liveRoutes, demoRoutes } = window.TrafficData;
   const $ = id => document.getElementById(id);
 
   /* ---------------- storage (best effort) ---------------- */
@@ -18,6 +18,9 @@
     refreshSec: store.get("refreshSec", cfg.refreshSeconds),
     rangeHours: store.get("rangeHours", 6),
     sort: store.get("sort", "congestion"),
+    commutePlaces: store.get("commute", null), // { home: {label, lat, lon, address}, work: {...} }
+    commuteData: null,                          // { toWork: {routes}|{error}, toHome: ... }
+    mapDir: null,                               // which commute direction is drawn on the map
     readings: [],
     incidents: [],
     lastUpdated: null,
@@ -72,6 +75,8 @@
   const fmtTime = t => new Date(t).toLocaleTimeString("en-IN", { ...IST, hour: "2-digit", minute: "2-digit" });
   const fmtClock = t => new Date(t).toLocaleTimeString("en-IN", { ...IST, hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const fmtDelay = s => s < 60 ? `+${Math.max(0, Math.round(s))} s` : `+${Math.round(s / 60)} min`;
+  const fmtMin = s => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
+  const fmtKm = m => `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
   const fmtPct = p => p == null ? "–" : String(Math.round(p));
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   function ago(t) {
@@ -95,6 +100,7 @@
     if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
     updateBaseLayer();
     if (state.readings.length) { renderMap(); renderTrend(); }
+    renderCommuteMap();
   }
 
   /* ---------------- map ---------------- */
@@ -138,6 +144,8 @@
   }
   updateBaseLayer();
 
+  map.createPane("commute").style.zIndex = 390; // just below corridor/incident overlays
+  const commuteLayer = L.layerGroup().addTo(map);
   const corridorLayer = L.layerGroup().addTo(map);
   const incidentLayer = L.layerGroup().addTo(map);
   // Long-running road closures are numerous and mostly static, so they get
@@ -146,7 +154,7 @@
   if (store.get("showClosures", false)) closureLayer.addTo(map);
   let flowTiles = null;
   const layerControl = L.control.layers(null, {
-    "Monitored corridors": corridorLayer, "Incidents": incidentLayer, "Road closures": closureLayer
+    "My commute": commuteLayer, "Monitored corridors": corridorLayer, "Incidents": incidentLayer, "Road closures": closureLayer
   }, { collapsed: true }).addTo(map);
   map.on("overlayadd overlayremove", e => { if (e.layer === closureLayer) store.set("showClosures", e.type === "overlayadd"); });
   const isClosure = i => i.magnitude === 4 || i.category === "Road closed";
@@ -317,6 +325,153 @@
     if (window.matchMedia("(max-width: 1100px)").matches) $("map").scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
+  /* ---------------- my commute ---------------- */
+  const DIRS = {
+    toWork: { label: "To work", from: "home", to: "work" },
+    toHome: { label: "To home", from: "work", to: "home" }
+  };
+  // Mornings (before 2 pm IST) you're heading to work; afternoons, home.
+  function currentDir() {
+    const d = new Date();
+    const h = (d.getUTCHours() + d.getUTCMinutes() / 60 + 5.5) % 24;
+    return h < 14 ? "toWork" : "toHome";
+  }
+
+  async function fetchCommute(signal) {
+    const pl = state.commutePlaces;
+    if (!pl) return null;
+    const run = async (from, to) => {
+      try { return { routes: isLive() ? await liveRoutes(state.key, from, to, signal) : demoRoutes(from, to) }; }
+      catch (err) { return { error: err.message || String(err) }; }
+    };
+    const [toWork, toHome] = await Promise.all([run(pl.home, pl.work), run(pl.work, pl.home)]);
+    return { toWork, toHome };
+  }
+
+  function tripHtml(dir, isCurrent) {
+    const d = DIRS[dir], pl = state.commutePlaces;
+    const from = pl[d.from], to = pl[d.to];
+    const res = state.commuteData && state.commuteData[dir];
+    const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lon}&destination=${to.lat},${to.lon}&travelmode=driving`;
+    let main;
+    if (!res) main = `<div class="trip-error">Loading…</div>`;
+    else if (res.error) main = `<div class="trip-error">Couldn't get a route: ${esc(res.error)}</div>`;
+    else if (!res.routes.length) main = `<div class="trip-error">No route found.</div>`;
+    else {
+      const best = res.routes[0];
+      const extra = best.noTraffic ? (best.travelTime / best.noTraffic - 1) * 100 : null;
+      let cmp = "";
+      if (best.typical) {
+        const diff = Math.round((best.travelTime - best.typical) / 60);
+        cmp = Math.abs(diff) <= 2 ? "About usual for this time"
+          : diff > 0 ? `${diff} min slower than usual` : `${-diff} min faster than usual`;
+      }
+      const sub = [
+        best.typical ? `Usually ${fmtMin(best.typical)} at this time` : "",
+        best.noTraffic ? `${fmtMin(best.noTraffic)} on empty roads` : "",
+        fmtKm(best.length)
+      ].filter(Boolean).join(" · ");
+      const routes = res.routes.length > 1 || best.via.length ? `<ul class="routes">${res.routes.map((r, i) => `
+        <li class="${i ? "" : "best"}">
+          <span>${r.via.length ? "via " + esc(r.via.join(", ")) : `Route ${i + 1}`} · ${fmtKm(r.length)}${i ? "" : '<span class="tag">FASTEST</span>'}</span>
+          <span class="r-time">${fmtMin(r.travelTime)}${i ? ` (+${Math.round((r.travelTime - best.travelTime) / 60)} min)` : ""}</span>
+        </li>`).join("")}</ul>` : "";
+      main = `<div class="trip-time">
+          <span><span class="big">${Math.round(best.travelTime / 60)}</span><span class="unit">min</span></span>
+          ${statusChip(statusKey(extra, false))}<span class="trip-cmp">${cmp}</span>
+        </div>
+        <div class="trip-sub">${sub}</div>${routes}`;
+    }
+    const canShow = res && res.routes && res.routes.length && res.routes[0].points.length;
+    return `<div class="trip${isCurrent ? " current" : ""}">
+      <div class="trip-head">
+        <span class="trip-dir">${d.label}${isCurrent ? '<span class="now-tag">Now</span>' : ""}</span>
+        <span class="trip-ends" title="${esc(from.address)} → ${esc(to.address)}">${esc(from.label)} → ${esc(to.label)}</span>
+      </div>
+      ${main}
+      <div class="trip-actions">
+        ${canShow ? `<button class="btn small ghost" type="button" data-show-dir="${dir}">Show on map</button>` : ""}
+        <a href="${gmaps}" target="_blank" rel="noopener">Compare in Google Maps ↗</a>
+      </div>
+    </div>`;
+  }
+
+  function renderCommute() {
+    const body = $("commute-body");
+    if (!state.commutePlaces) {
+      body.className = "commute-body single";
+      body.innerHTML = `<div class="commute-empty"><span>See live travel time between home and work, both ways.</span>
+        <button class="btn small" type="button" data-open-settings>Set up my commute</button></div>`;
+      $("commute-note").textContent = "";
+      return;
+    }
+    body.className = "commute-body";
+    const cur = currentDir();
+    const order = cur === "toWork" ? ["toWork", "toHome"] : ["toHome", "toWork"];
+    $("commute-note").textContent = isLive() ? "Live travel times by TomTom · fastest route first" : "Demo: simulated travel times";
+    body.innerHTML = order.map(dir => tripHtml(dir, dir === cur)).join("");
+  }
+
+  function renderCommuteMap() {
+    commuteLayer.clearLayers();
+    const pl = state.commutePlaces;
+    if (!pl) return;
+    const surface = cssVar("--surface"), accent = cssVar("--accent"), muted = cssVar("--muted");
+    const res = state.commuteData && state.commuteData[state.mapDir || currentDir()];
+    if (res && res.routes) {
+      // Draw alternatives first (dashed, muted) so the fastest route sits on top.
+      [...res.routes].reverse().forEach((r, idx, arr) => {
+        if (!r.points.length) return;
+        const best = idx === arr.length - 1;
+        L.polyline(r.points, { pane: "commute", color: surface, weight: best ? 10 : 8, opacity: 0.9, interactive: false }).addTo(commuteLayer);
+        L.polyline(r.points, { pane: "commute", color: best ? accent : muted, weight: best ? 6 : 4, dashArray: best ? null : "6 8" })
+          .bindTooltip(`${best ? "Fastest" : "Alternative"}: ${fmtMin(r.travelTime)} · ${fmtKm(r.length)}${r.via.length ? " · via " + esc(r.via.join(", ")) : ""}`, { sticky: true })
+          .addTo(commuteLayer);
+      });
+    }
+    for (const [k, letter, title] of [["home", "H", "Home"], ["work", "W", "Work"]]) {
+      const p = pl[k];
+      const icon = L.divIcon({ className: "", html: `<div class="pin">${letter}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+      L.marker([p.lat, p.lon], { icon, title, keyboard: false, zIndexOffset: 500 })
+        .bindTooltip(`${title}: ${esc(p.address || p.label)}`, { direction: "top", offset: [0, -12] })
+        .addTo(commuteLayer);
+    }
+  }
+
+  function showCommuteOnMap(dir) {
+    state.mapDir = dir;
+    renderCommuteMap();
+    const res = state.commuteData && state.commuteData[dir];
+    const pts = res && res.routes ? res.routes.flatMap(r => r.points) : [];
+    if (pts.length) map.flyToBounds(L.latLngBounds(pts), { padding: [30, 30], duration: 0.6 });
+    $("map").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  async function saveCommute(homeQ, workQ) {
+    if (!homeQ && !workQ) {
+      state.commutePlaces = null; state.commuteData = null;
+      store.set("commute", null);
+      renderCommute(); renderCommuteMap();
+      return;
+    }
+    if (!homeQ || !workQ) { showBanner("error", "<strong>Commute not saved:</strong> enter both Home and Work."); return; }
+    $("commute-note").textContent = "Finding your places…";
+    try {
+      const [h, w] = await Promise.all([geocode(state.key, homeQ, cfg.map.center), geocode(state.key, workQ, cfg.map.center)]);
+      state.commutePlaces = { home: { label: homeQ, ...h }, work: { label: workQ, ...w } };
+      store.set("commute", state.commutePlaces);
+      state.commuteData = null; state.mapDir = null;
+      renderCommute();
+      state.commuteData = await fetchCommute();
+      renderCommute(); renderCommuteMap();
+      const b = L.latLngBounds([[h.lat, h.lon], [w.lat, w.lon]]);
+      map.flyToBounds(b, { padding: [40, 40], duration: 0.6 });
+    } catch (err) {
+      showBanner("error", `<strong>Commute not saved:</strong> ${esc(err.message || String(err))}`);
+      renderCommute();
+    }
+  }
+
   /* ---------------- history ---------------- */
   function liveHistory() { return store.get("history", []); }
   function pushHistory(t, index) {
@@ -465,6 +620,8 @@
     renderTable();
     renderIncidents();
     renderTrend();
+    renderCommute();
+    renderCommuteMap();
   }
 
   /* ---------------- refresh loop ---------------- */
@@ -476,7 +633,9 @@
     controller = new AbortController();
     let warnings = [];
     try {
+      const commute = fetchCommute(controller.signal); // runs alongside the main fetch
       const data = isLive() ? await fetchLive(cfg, state.key, controller.signal) : fetchDemo(cfg);
+      state.commuteData = await commute;
       state.readings = data.readings;
       state.incidents = data.incidents;
       state.lastUpdated = Date.now();
@@ -509,7 +668,8 @@
   const dialog = $("settings");
   function updateQuotaHint() {
     const sec = Number($("interval-select").value);
-    const perHour = Math.round((3600 / sec) * (cfg.corridors.length + 1));
+    const perRefresh = cfg.corridors.length + 1 + (state.commutePlaces ? 2 : 0);
+    const perHour = Math.round((3600 / sec) * perRefresh);
     const hours = Math.floor(2500 / perHour * 10) / 10;
     $("quota-hint").textContent = `≈ ${perHour} API requests per hour while this tab is open (free tier: 2,500/day ≈ ${hours} h of viewing).`;
   }
@@ -517,6 +677,8 @@
     if (ev) ev.preventDefault();
     $("key-input").value = state.key;
     $("interval-select").value = String(state.refreshSec);
+    $("home-input").value = state.commutePlaces ? state.commutePlaces.home.label : "";
+    $("work-input").value = state.commutePlaces ? state.commutePlaces.work.label : "";
     updateQuotaHint();
     dialog.showModal();
   }
@@ -529,19 +691,28 @@
     state.refreshSec = Number($("interval-select").value);
     store.set("key", state.key);
     store.set("refreshSec", state.refreshSec);
+    const homeQ = $("home-input").value.trim(), workQ = $("work-input").value.trim();
+    const pl = state.commutePlaces;
+    const commuteChanged = homeQ !== (pl ? pl.home.label : "") || workQ !== (pl ? pl.work.label : "");
     if (keyChanged) {
       if (controller) controller.abort();
       state.loading = false;
       state.readings = []; state.incidents = []; state.lastUpdated = null; state.error = null;
       syncFlowTiles();
-      refresh();
+      if (commuteChanged) saveCommute(homeQ, workQ).then(refresh); else refresh();
     } else {
+      if (commuteChanged) saveCommute(homeQ, workQ);
       state.nextAt = Math.min(state.nextAt, Date.now() + state.refreshSec * 1000);
     }
   });
 
   /* ---------------- wire up ---------------- */
   $("settings-btn").addEventListener("click", openSettings);
+  $("commute-body").addEventListener("click", ev => {
+    const show = ev.target.closest("[data-show-dir]");
+    if (show) showCommuteOnMap(show.dataset.showDir);
+    if (ev.target.closest("[data-open-settings]")) openSettings(ev);
+  });
   $("refresh-btn").addEventListener("click", refresh);
   $("theme-btn").addEventListener("click", () => {
     const next = effectiveDark() ? "light" : "dark";
