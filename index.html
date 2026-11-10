@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hyderabad Traffic Live</title>
+  <meta name="description" content="Live traffic dashboard for Hyderabad: corridor speeds, congestion, and incidents.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='9' y='2' width='14' height='28' rx='4' fill='%23222'/><circle cx='16' cy='9' r='3.5' fill='%23d03b3b'/><circle cx='16' cy='16' r='3.5' fill='%23fab219'/><circle cx='16' cy='23' r='3.5' fill='%230ca30c'/></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Hyderabad Traffic</h1>
+      <span id="mode-pill" class="pill" title="Data source">Demo data</span>
+    </div>
+    <div class="status-line" aria-live="polite">
+      <span class="live-dot" id="live-dot" aria-hidden="true"></span>
+      <span id="updated">Loading…</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span id="countdown"></span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span id="clock" title="India Standard Time"></span>
+    </div>
+    <div class="actions">
+      <button id="refresh-btn" class="btn" type="button">Refresh</button>
+      <button id="theme-btn" class="btn ghost" type="button" aria-label="Toggle dark mode">Theme</button>
+      <button id="settings-btn" class="btn ghost" type="button">Settings</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main class="grid">
+    <section class="kpis" aria-label="Summary">
+      <article class="tile hero">
+        <h2>City congestion</h2>
+        <div class="tile-value"><span id="kpi-index">–</span><span class="unit">%</span></div>
+        <div class="tile-sub" id="kpi-index-sub">extra travel time vs free flow</div>
+      </article>
+      <article class="tile">
+        <h2>Average speed</h2>
+        <div class="tile-value"><span id="kpi-speed">–</span><span class="unit">km/h</span></div>
+        <div class="tile-sub" id="kpi-speed-sub">across monitored corridors</div>
+      </article>
+      <article class="tile">
+        <h2>Active incidents</h2>
+        <div class="tile-value"><span id="kpi-incidents">–</span></div>
+        <div class="tile-sub" id="kpi-incidents-sub">in Greater Hyderabad</div>
+      </article>
+      <article class="tile wide">
+        <h2>Corridor status</h2>
+        <div class="segbar" id="segbar" role="img" aria-label="Corridor status breakdown"></div>
+        <ul class="seg-legend" id="seg-legend"></ul>
+      </article>
+    </section>
+
+    <section class="card map-card" aria-label="Map">
+      <div class="card-head">
+        <h2>Live map</h2>
+        <span class="card-note" id="map-note">Corridor segments coloured by congestion</span>
+      </div>
+      <div id="map"></div>
+    </section>
+
+    <section class="card corridors-card" aria-label="Corridors">
+      <div class="card-head">
+        <h2>Corridors</h2>
+        <label class="sort">Sort
+          <select id="sort-select">
+            <option value="congestion">Most congested</option>
+            <option value="delay">Longest delay</option>
+            <option value="speed">Slowest</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table class="corridor-table">
+          <thead>
+            <tr><th scope="col">Corridor</th><th scope="col" class="col-status">Status</th><th scope="col" class="num">Speed</th><th scope="col" class="num">Delay</th></tr>
+          </thead>
+          <tbody id="corridor-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card trend-card" aria-label="Congestion trend">
+      <div class="card-head">
+        <h2>City congestion trend</h2>
+        <div class="range" role="group" aria-label="Time range">
+          <button type="button" data-hours="3">3h</button>
+          <button type="button" data-hours="6" class="on">6h</button>
+          <button type="button" data-hours="24">24h</button>
+        </div>
+      </div>
+      <div class="chart" id="trend"></div>
+    </section>
+
+    <section class="card incidents-card" aria-label="Incidents">
+      <div class="card-head">
+        <h2>Incidents</h2>
+        <span class="card-note" id="incident-note"></span>
+      </div>
+      <ul class="incident-list" id="incident-list"></ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="source-note">Traffic data: TomTom Traffic API. Base map © OpenStreetMap contributors, © CARTO.</span>
+    <span>Official advisories: <a href="https://www.htp.gov.in/" target="_blank" rel="noopener">Hyderabad Traffic Police</a></span>
+  </footer>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h2>Settings</h2>
+      <label>TomTom API key
+        <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty for demo data">
+      </label>
+      <p class="hint">Get a free key at developer.tomtom.com. It is saved only in this browser.</p>
+      <label>Refresh every
+        <select id="interval-select">
+          <option value="60">1 minute</option>
+          <option value="120">2 minutes</option>
+          <option value="300">5 minutes</option>
+          <option value="600">10 minutes</option>
+          <option value="900">15 minutes</option>
+        </select>
+      </label>
+      <p class="hint" id="quota-hint"></p>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel" type="submit">Cancel</button>
+        <button class="btn" value="save" id="save-settings" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="js/config.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
