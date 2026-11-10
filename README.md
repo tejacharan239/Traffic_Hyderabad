@@ -8,6 +8,7 @@ Live status of Hyderabad traffic: an auto-refreshing dashboard. It monitors 18 k
 
 - **City congestion index**: extra travel time across the monitored corridors compared with free-flow conditions (similar to the TomTom Traffic Index).
 - **Live map** (Leaflet): TomTom map with its live flow layer for all roads, the monitored corridors coloured by congestion, and incident markers. Road closures are on a separate layer, hidden by default (turn it on from the layers button).
+- **Commute alerts**: phone notifications (Telegram or ntfy) when your evening commute is heavy. See [Commute alerts](#commute-alerts-phone-notifications).
 - **My commute**: live travel time between your home and work in both directions, with the usual time for this hour, the empty-road time, up to three route options (named by the main roads they use) drawn on the map, and a link to compare in Google Maps.
 - **Corridor table**: current speed vs free-flow speed, delay and status (Free flow / Moderate / Heavy / Severe / Closed), sortable. Click a row to fly to it on the map.
 - **Incidents feed**: accidents, jams, road works, closures and flooding, sorted by severity.
@@ -40,9 +41,36 @@ Map and traffic tiles count against a separate, larger tile quota.
 
 ## Set up your commute
 
-Open **Settings → My commute** and enter **Home** and **Work**, either as place names (for example `Commerzone Raidurg`) or as exact coordinates (`17.4325, 78.3772`). Place names are looked up with TomTom Search, so they need an API key. Hover the **H** and **W** pins on the map to check that the right places were found; if a place is off, paste coordinates instead (in Google Maps, long-press a spot to copy them).
+Open **Settings → My commute** and enter **Home** and **Work**, either as place names (for example `Cyber Towers, Hitech City`) or as exact coordinates (`17.45040, 78.38100`). Place names are looked up with TomTom Search, so they need an API key. Hover the **H** and **W** pins on the map to check that the right places were found; if a place is off, paste coordinates instead (in Google Maps, long-press a spot to copy them).
 
 Your places are saved only in your browser and are never written to this repository. The commute adds 2 routing requests to each refresh.
+
+## Commute alerts (phone notifications)
+
+A scheduled GitHub Action (`.github/workflows/commute-alerts.yml`) checks the office → home route at **4:25, 4:40 and 4:55 PM IST, Monday to Friday**. If traffic is heavy, it sends a message to your phone. The message has the current travel time compared with the usual time, the route options, predicted times if you leave at 5:00, 5:30 or 6:00 PM, and any accidents or jams on your route. The dashboard doesn't need to be open.
+
+### Setup
+
+1. In the repo, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+   - `TOMTOM_KEY`: your TomTom API key
+   - `HOME_COORDS`: e.g. `17.36160, 78.47470`
+   - `WORK_COORDS`: e.g. `17.45040, 78.38100`
+2. Pick where messages go (one or both):
+   - **Telegram:** in Telegram, open **@BotFather**, send `/newbot` and follow the steps. Save the token it gives you as the secret `TELEGRAM_BOT_TOKEN`. Then open your new bot and send it any message (e.g. "hi"). The first test run (step 3) replies with your chat ID; save it as the secret `TELEGRAM_CHAT_ID`.
+   - **ntfy** (no account needed): install the **ntfy** app, tap **+**, and subscribe to a hard-to-guess topic name such as `hyd-traffic-k39xq72m`. Save that name as the secret `NTFY_TOPIC`. Anyone who knows the name can read the messages, so keep it random.
+3. Test it: go to **Actions → Commute alerts → Run workflow**. A test run sends a message even when traffic is normal.
+
+Secrets stay private even though the repository is public, and the script never writes places or routes to the (public) Actions logs.
+
+### Options
+
+- **Morning alerts** (6:25 to 6:55 AM, for a 7:00 AM start): remove the `#` from the two morning `cron` lines in the workflow file.
+- **Sensitivity:** alerts fire when the trip takes 50% or more longer than on empty roads (the dashboard's *Heavy* level). To change this, add a repository *variable* (not a secret) `ALERT_EXTRA_PCT`, e.g. `70` for fewer alerts.
+- **Departure times:** variables `EVENING_DEPART` (default `17:00`) and `MORNING_DEPART` (default `07:00`) set the times used for the "if you leave at" predictions.
+
+GitHub can start scheduled runs a few minutes late; runs that start after 5:30 PM are skipped. GitHub also pauses schedules in repositories with no activity for 60 days; re-enable them from the Actions tab.
+
+Each check uses 1 routing request, plus 4 more when it alerts. That's at most 15 a day.
 
 ## Run locally
 
@@ -76,6 +104,7 @@ css/styles.css      styles and light/dark theme tokens
 js/config.js        corridors and settings
 js/data.js          TomTom API client and demo-data simulator
 js/app.js           UI rendering, map, chart and refresh loop
+alerts/             scheduled commute alert script (GitHub Actions)
 ```
 
 ## Data and attribution

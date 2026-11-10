@@ -1,0 +1,47 @@
+name: Commute alerts
+
+on:
+  schedule:
+    # GitHub schedules are in UTC. IST = UTC + 5:30.
+    # Evening, office -> home (usual departure 5:00 PM), Monday-Friday:
+    - cron: "55 10 * * 1-5"    # 4:25 PM IST
+    - cron: "10,25 11 * * 1-5" # 4:40 PM and 4:55 PM IST
+    # Morning, home -> office (usual departure 7:00 AM). Remove the "#" to turn on:
+    # - cron: "55 0 * * 1-5"    # 6:25 AM IST
+    # - cron: "10,25 1 * * 1-5" # 6:40 AM and 6:55 AM IST
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Send a message now even if traffic is normal (to test your setup)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commute-alerts
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check commute and alert if heavy
+        run: node alerts/commute-alert.mjs
+        env:
+          TOMTOM_KEY: ${{ secrets.TOMTOM_KEY }}
+          HOME_COORDS: ${{ secrets.HOME_COORDS }}
+          WORK_COORDS: ${{ secrets.WORK_COORDS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          ALERT_EXTRA_PCT: ${{ vars.ALERT_EXTRA_PCT }}
+          EVENING_DEPART: ${{ vars.EVENING_DEPART }}
+          MORNING_DEPART: ${{ vars.MORNING_DEPART }}
+          FORCE: ${{ inputs.test }}
