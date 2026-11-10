@@ -7,7 +7,7 @@ Live status of Hyderabad traffic: an auto-refreshing dashboard. It monitors 18 k
 ## Features
 
 - **City congestion index**: extra travel time across the monitored corridors compared with free-flow conditions (similar to the TomTom Traffic Index).
-- **Live map** (Leaflet): TomTom's live flow layer for all roads, the monitored corridors coloured by congestion, and incident markers.
+- **Live map** (Leaflet): TomTom map with its live flow layer for all roads, the monitored corridors coloured by congestion, and incident markers. Road closures are on a separate layer, hidden by default (turn it on from the layers button).
 - **Corridor table**: current speed vs free-flow speed, delay and status (Free flow / Moderate / Heavy / Severe / Closed), sortable. Click a row to fly to it on the map.
 - **Incidents feed**: accidents, jams, road works, closures and flooding, sorted by severity.
 - **Congestion trend** for 3h, 6h or 24h, stored in your browser and built up as the page refreshes.
@@ -35,7 +35,7 @@ Each refresh makes one Flow request per corridor (18) plus one Incidents request
 | 5 min (default) | 228 | ~11 h |
 | 15 min | 76 | ~33 h |
 
-Map traffic tiles count against a separate, larger tile quota.
+Map and traffic tiles count against a separate, larger tile quota.
 
 ## Run locally
 
@@ -73,6 +73,6 @@ js/app.js           UI rendering, map, chart and refresh loop
 
 ## Data and attribution
 
-- Traffic data © TomTom. Base map © OpenStreetMap contributors, © CARTO.
+- Traffic data and map (live mode) © TomTom. Demo-mode map © OpenStreetMap contributors.
 - For official advisories and diversions, see the [Hyderabad Traffic Police](https://www.htp.gov.in/).
 - Demo-mode values are simulated and are not real traffic conditions.

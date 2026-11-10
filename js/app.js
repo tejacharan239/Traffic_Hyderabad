@@ -99,34 +99,62 @@
 
   /* ---------------- map ---------------- */
   const map = L.map("map", { zoomControl: true, attributionControl: true }).setView(cfg.map.center, cfg.map.zoom);
-  const baseLayers = {
-    light: L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 19, subdomains: "abcd",
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-    }),
-    dark: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 19, subdomains: "abcd",
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-    })
-  };
-  let currentBase = null;
+  /*
+   * Base map: with a TomTom key, use TomTom's own map tiles (same key, separate
+   * tile quota, India boundaries via view=IN). Without a key, or if TomTom
+   * tiles fail, fall back to standard OpenStreetMap tiles.
+   */
+  const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  let currentBase = null, currentBaseSig = "", tomtomBaseFailed = false;
+  function makeBase(useTomTom, dark) {
+    if (useTomTom) {
+      const layer = L.tileLayer(`https://{s}.api.tomtom.com/map/1/tile/basic/${dark ? "night" : "main"}/{z}/{x}/{y}.png?key=${encodeURIComponent(state.key)}&view=IN&tileSize=256`, {
+        subdomains: "abcd", maxZoom: 20,
+        attribution: 'Map &copy; <a href="https://www.tomtom.com">TomTom</a>'
+      });
+      let loaded = 0, failed = 0;
+      layer.on("tileload", () => { loaded++; });
+      layer.on("tileerror", () => {
+        if (++failed >= 4 && loaded === 0 && !tomtomBaseFailed) {
+          tomtomBaseFailed = true;
+          updateBaseLayer();
+        }
+      });
+      return layer;
+    }
+    return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: OSM_ATTR, className: dark ? "osm-dark" : ""
+    });
+  }
   function updateBaseLayer() {
-    const want = effectiveDark() ? baseLayers.dark : baseLayers.light;
-    if (currentBase === want) return;
+    const useTomTom = isLive() && !tomtomBaseFailed;
+    const dark = effectiveDark();
+    const sig = `${useTomTom}-${dark}-${state.key}`;
+    if (sig === currentBaseSig) return;
     if (currentBase) map.removeLayer(currentBase);
-    want.addTo(map).bringToBack();
-    currentBase = want;
+    currentBase = makeBase(useTomTom, dark).addTo(map);
+    currentBase.bringToBack();
+    currentBaseSig = sig;
   }
   updateBaseLayer();
 
   const corridorLayer = L.layerGroup().addTo(map);
   const incidentLayer = L.layerGroup().addTo(map);
+  // Long-running road closures are numerous and mostly static, so they get
+  // their own layer, hidden by default.
+  const closureLayer = L.layerGroup();
+  if (store.get("showClosures", false)) closureLayer.addTo(map);
   let flowTiles = null;
-  const layerControl = L.control.layers(null, { "Monitored corridors": corridorLayer, "Incidents": incidentLayer }, { collapsed: true }).addTo(map);
+  const layerControl = L.control.layers(null, {
+    "Monitored corridors": corridorLayer, "Incidents": incidentLayer, "Road closures": closureLayer
+  }, { collapsed: true }).addTo(map);
+  map.on("overlayadd overlayremove", e => { if (e.layer === closureLayer) store.set("showClosures", e.type === "overlayadd"); });
+  const isClosure = i => i.magnitude === 4 || i.category === "Road closed";
   const corridorMarkers = new Map();
   const incidentMarkers = new Map();
 
   function syncFlowTiles() {
+    updateBaseLayer();
     if (isLive() && !flowTiles) {
       flowTiles = L.tileLayer(`https://{s}.api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${encodeURIComponent(state.key)}`, {
         subdomains: "abcd", maxZoom: 22, opacity: 0.85, zIndex: 5,
@@ -183,6 +211,7 @@
 
   function renderIncidentMarkers() {
     incidentLayer.clearLayers();
+    closureLayer.clearLayers();
     incidentMarkers.clear();
     for (const inc of state.incidents) {
       const icon = L.divIcon({ className: "", html: `<div class="inc-marker m${inc.magnitude}">!</div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
@@ -192,7 +221,7 @@
         ${inc.from || inc.to ? `<div class="row">${esc(inc.from)}${inc.to ? " → " + esc(inc.to) : ""}</div>` : ""}
         ${inc.delay ? `<div class="row">Delay <b>${fmtDelay(inc.delay)}</b></div>` : ""}
         ${inc.startTime ? `<div class="row">Since ${fmtTime(inc.startTime)} IST</div>` : ""}</div>`);
-      m.addTo(incidentLayer);
+      m.addTo(isClosure(inc) ? closureLayer : incidentLayer);
       incidentMarkers.set(inc.id, m);
     }
   }
@@ -206,9 +235,12 @@
     $("kpi-speed").textContent = m.avgSpeed == null ? "–" : Math.round(m.avgSpeed);
     $("kpi-speed-sub").textContent = m.avgFree == null ? "across monitored corridors" : `free flow ${Math.round(m.avgFree)} km/h`;
 
-    const major = state.incidents.filter(i => i.magnitude >= 3).length;
-    $("kpi-incidents").textContent = state.incidents.length;
-    $("kpi-incidents-sub").textContent = major ? `${major} major or closure` : "in Greater Hyderabad";
+    const active = state.incidents.filter(i => !isClosure(i));
+    const major = active.filter(i => i.magnitude === 3).length;
+    const closures = state.incidents.length - active.length;
+    $("kpi-incidents").textContent = active.length;
+    $("kpi-incidents-sub").textContent = [major ? `${major} major` : "", closures ? `${closures} road closure${closures === 1 ? "" : "s"}` : ""]
+      .filter(Boolean).join(" · ") || "in Greater Hyderabad";
 
     const counts = Object.fromEntries(STATUS_ORDER.map(s => [s, 0]));
     for (const c of cfg.corridors) {
@@ -260,8 +292,12 @@
 
   /* ---------------- incidents list ---------------- */
   function renderIncidents() {
-    const list = [...state.incidents].sort((a, b) => b.magnitude - a.magnitude || b.delay - a.delay);
-    $("incident-note").textContent = list.length ? `${list.length} active · sorted by severity` : "";
+    // Live incidents first (most severe, then longest delay); closures last.
+    const list = [...state.incidents].sort((a, b) =>
+      isClosure(a) - isClosure(b) || b.magnitude - a.magnitude || b.delay - a.delay);
+    const closures = list.filter(isClosure).length;
+    $("incident-note").textContent = list.length
+      ? `${list.length - closures} incident${list.length - closures === 1 ? "" : "s"}${closures ? ` · ${closures} closure${closures === 1 ? "" : "s"}` : ""} · most severe first` : "";
     $("incident-list").innerHTML = list.length ? list.map(i => `
       <li data-id="${esc(i.id)}" tabindex="0">
         <div class="inc-marker m${i.magnitude}" aria-hidden="true">!</div>
@@ -274,6 +310,8 @@
   function focusIncident(id) {
     const m = incidentMarkers.get(id);
     if (!m) return;
+    const inc = state.incidents.find(i => String(i.id) === String(id));
+    if (inc && isClosure(inc) && !map.hasLayer(closureLayer)) { closureLayer.addTo(map); store.set("showClosures", true); }
     map.flyTo(m.getLatLng(), 15, { duration: 0.6 });
     m.openPopup();
     if (window.matchMedia("(max-width: 1100px)").matches) $("map").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -393,8 +431,8 @@
     $("live-dot").className = "live-dot" + (state.error ? " err" : state.lastUpdated ? " on" : "");
     $("updated").textContent = state.lastUpdated ? `Updated ${fmtTime(state.lastUpdated)} IST (${ago(state.lastUpdated)})` : "Loading…";
     $("source-note").innerHTML = isLive()
-      ? "Traffic data: TomTom Traffic API. Base map © OpenStreetMap contributors, © CARTO."
-      : "Demo mode: traffic values are simulated from typical Hyderabad rush-hour patterns. Base map © OpenStreetMap contributors, © CARTO.";
+      ? "Traffic data and map: © TomTom."
+      : "Demo mode: traffic values are simulated from typical Hyderabad rush-hour patterns. Map © OpenStreetMap contributors.";
   }
 
   function showBanner(kind, html) {

@@ -179,6 +179,8 @@ a { color: var(--accent); }
 #map { height: 520px; border-radius: 0 0 var(--radius) var(--radius); background: var(--surface-2); }
 @media (max-width: 600px) { #map { height: 380px; } }
 .leaflet-container { font: 13px/1.4 var(--font); }
+/* OpenStreetMap has no dark style; invert it for dark mode. */
+.osm-dark { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--ink); }
 .leaflet-popup-content { margin: 12px 14px; }
 .popup h3 { margin: 0 0 4px; font-size: 14px; }
