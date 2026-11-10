@@ -39,6 +39,15 @@ Each refresh makes one Flow request per corridor (18) plus one Incidents request
 
 Map and traffic tiles count against a separate, larger tile quota.
 
+## Install on your phone
+
+No App Store needed: add the dashboard to your Home Screen and it opens full screen with its own icon, like an app.
+
+- **iPhone:** open the dashboard in **Safari**, tap **Share** (the square with an arrow), then **Add to Home Screen → Add**.
+- **Android:** open it in **Chrome**, tap **⋮**, then **Add to Home screen** (or **Install app**).
+
+On iPhone the Home Screen app keeps its own storage, separate from Safari, so enter your TomTom key and commute in **Settings** once more inside the app.
+
 ## Set up your commute
 
 Open **Settings → My commute** and enter **Home** and **Work**, either as place names (for example `Cyber Towers, Hitech City`) or as exact coordinates (`17.45040, 78.38100`). Place names are looked up with TomTom Search, so they need an API key. Hover the **H** and **W** pins on the map to check that the right places were found; if a place is off, paste coordinates instead (in Google Maps, long-press a spot to copy them).

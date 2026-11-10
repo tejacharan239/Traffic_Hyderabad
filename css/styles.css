@@ -139,6 +139,8 @@ a { color: var(--accent); }
   .banner { margin-left: 16px; margin-right: 16px; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .kpis .hero { grid-column: 1 / -1; }
+  /* On phones, your commute is the thing you check most: put it first. */
+  .grid { grid-template-areas: "commute" "kpis" "map" "corridors" "trend" "incidents"; }
   .actions { width: 100%; }
   .actions .btn { flex: 1; }
   .status-line { order: 3; flex-basis: 100%; }
@@ -306,3 +308,27 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .commute-fields legend { font-weight: 600; font-size: 13px; padding: 0 4px; }
 .hint code { font-size: 11.5px; }
 .pin { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 var(--font); color: #fff; background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+
+/* ---------- iPhone notch / home indicator (Home Screen app) ---------- */
+@supports (padding: env(safe-area-inset-top)) {
+  .topbar {
+    padding-top: calc(14px + env(safe-area-inset-top));
+    padding-left: calc(20px + env(safe-area-inset-left));
+    padding-right: calc(20px + env(safe-area-inset-right));
+  }
+  .grid, .footer {
+    padding-left: calc(20px + env(safe-area-inset-left));
+    padding-right: calc(20px + env(safe-area-inset-right));
+  }
+  .footer { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  @media (max-width: 600px) {
+    .topbar, .grid, .footer {
+      padding-left: calc(16px + env(safe-area-inset-left));
+      padding-right: calc(16px + env(safe-area-inset-right));
+    }
+  }
+}
+/* Installed app: no browser chrome, so avoid accidental text selection on taps. */
+@media (display-mode: standalone) {
+  .topbar, .btn, .range, .corridor-table tbody tr, .incident-list li { -webkit-user-select: none; user-select: none; }
+}
